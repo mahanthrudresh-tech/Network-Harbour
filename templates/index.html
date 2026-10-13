@@ -1,0 +1,191 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network Harbour | SDN Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <header>
+        <div>
+            <p class="eyebrow">SOFTWARE-DEFINED NETWORKING</p>
+            <h1>Network Harbour</h1>
+            <p class="subtitle">Bandwidth reservation monitor</p>
+        </div>
+        <div class="connection">
+            <span class="live-dot"></span>
+            Live request history
+        </div>
+    </header>
+
+    <main>
+        <section class="stats">
+            <article class="stat-card">
+                <span>Total requests</span>
+                <strong id="count">0</strong>
+            </article>
+            <article class="stat-card">
+                <span>Approved</span>
+                <strong id="approved">0</strong>
+            </article>
+            <article class="stat-card">
+                <span>Rejected</span>
+                <strong id="rejected">0</strong>
+            </article>
+            <article class="stat-card">
+                <span>Queued</span>
+                <strong id="queued">0</strong>
+            </article>
+        </section>
+
+        <section class="panel">
+            <div class="panel-heading">
+                <div>
+                    <h2>Reservation requests</h2>
+                    <p>Requests passing through the intermediate server</p>
+                </div>
+                <button id="refresh">Refresh</button>
+            </div>
+
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Request ID</th>
+                            <th>Client</th>
+                            <th>Route</th>
+                            <th>Bandwidth</th>
+                            <th>Duration</th>
+                            <th>Priority</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="requests">
+                        <tr>
+                            <td colspan="7">Waiting for requests...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-heading">
+                <div>
+                    <h2>Request details</h2>
+                    <p>Select a row to inspect its request and response.</p>
+                </div>
+            </div>
+            <div class="details-grid">
+                <div>
+                    <h3>Request JSON</h3>
+                    <pre id="request-json">Select a request.</pre>
+                </div>
+                <div>
+                    <h3>Response JSON</h3>
+                    <pre id="response-json">No response selected.</pre>
+                </div>
+            </div>
+        </section>
+        <p id="updated">Waiting for the first refresh...</p>
+    </main>
+
+    <script>
+        let history = [];
+
+        function makeCell(value) {
+            const td = document.createElement("td");
+            td.textContent = value ?? "—";
+            return td;
+        }
+
+        function showDetails(index) {
+            const item = history[index];
+            document.getElementById("request-json").textContent =
+                JSON.stringify(item.request, null, 2);
+            document.getElementById("response-json").textContent =
+                JSON.stringify(item.response, null, 2);
+        }
+
+        async function refreshRequests() {
+            try {
+                const response = await fetch("/api/requests");
+                if (!response.ok) throw new Error("Dashboard API unavailable");
+
+                const data = await response.json();
+                history = data.requests;
+
+                const counts = { approved: 0, rejected: 0, queued: 0 };
+
+                history.forEach(item => {
+                    const status = String(item.response?.status || "").toLowerCase();
+                    if (status in counts) counts[status]++;
+                });
+
+                document.getElementById("count").textContent = data.count;
+                document.getElementById("approved").textContent = counts.approved;
+                document.getElementById("rejected").textContent = counts.rejected;
+                document.getElementById("queued").textContent = counts.queued;
+
+                const tbody = document.getElementById("requests");
+                tbody.replaceChildren();
+
+                if (!history.length) {
+                    const row = document.createElement("tr");
+                    const cell = makeCell("No requests received yet.");
+                    cell.colSpan = 7;
+                    row.appendChild(cell);
+                    tbody.appendChild(row);
+                }
+
+                history.forEach((item, index) => {
+                    const req = item.request || {};
+                    const res = item.response || {};
+                    const resource = req.resource || {};
+                    const source = req.source || {};
+                    const destination = req.destination || {};
+
+                    const row = document.createElement("tr");
+                    row.className = "request-row";
+                    row.tabIndex = 0;
+
+                    [
+                        req.request_id,
+                        req.client_id,
+                        `${source.host || "?"} → ${destination.host || "?"}`,
+                        resource.bandwidth_mbps == null
+                            ? "—" : `${resource.bandwidth_mbps} Mbps`,
+                        resource.duration_seconds == null
+                            ? "—" : `${resource.duration_seconds}s`,
+                        req.priority,
+                        res.status || "unknown"
+                    ].forEach(value => row.appendChild(makeCell(value)));
+
+                    const statusCell = row.lastElementChild;
+                    statusCell.className = "status " +
+                        String(res.status || "unknown").toLowerCase();
+
+                    row.addEventListener("click", () => showDetails(index));
+                    row.addEventListener("keydown", event => {
+                        if (event.key === "Enter") showDetails(index);
+                    });
+                    tbody.appendChild(row);
+                });
+
+                document.getElementById("updated").textContent =
+                    "Last updated: " + new Date().toLocaleTimeString();
+
+            } catch (error) {
+                document.getElementById("updated").textContent =
+                    "Connection error: " + error.message;
+            }
+        }
+
+        document.getElementById("refresh").addEventListener("click", refreshRequests);
+        refreshRequests();
+        setInterval(refreshRequests, 3000);
+    </script>
+</body>
+</html>
